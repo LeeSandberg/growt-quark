@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "growt-quark"
+version = "0.2.0"
+description = "Growt transfer audit wrapper for AMD Quark quantization"
+readme = "README.md"
+license = {text = "MPL-2.0"}
+requires-python = ">=3.10"
+dependencies = ["torch>=2.0", "numpy>=1.24", "growt-client>=0.2.0"]
+
+[project.optional-dependencies]
+quark = ["amd-quark"]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["growt_quark*"]
