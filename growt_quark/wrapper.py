@@ -17,57 +17,9 @@ from growt_client import (
     format_audit_report,
     format_quantization_report,
 )
+from growt_quark.extractor import extract_features
 
 logger = logging.getLogger("growt_quark")
-
-
-# Reuse extractor from shared location or inline
-def _extract_features(
-    model: torch.nn.Module, dataloader: DataLoader,
-    layer_name: Optional[str] = None, max_samples: int = 5000,
-) -> tuple:
-    """Extract features from model's penultimate layer."""
-    import numpy as np
-    device = next(model.parameters()).device
-    model.eval()
-
-    # Auto-detect penultimate layer
-    children = list(model.children())
-    target = children[-2] if len(children) >= 2 else children[-1]
-
-    features_list, labels_list = [], []
-    hook_output: list[torch.Tensor] = []
-
-    def hook_fn(_m, _i, output):
-        hook_output.clear()
-        out = output[0] if isinstance(output, tuple) else output
-        hook_output.append(out.detach())
-
-    handle = target.register_forward_hook(hook_fn)
-    collected = 0
-
-    try:
-        with torch.no_grad():
-            for batch in dataloader:
-                if collected >= max_samples:
-                    break
-                inputs = batch[0].to(device) if isinstance(batch, (list, tuple)) else batch.to(device)
-                labels = batch[1] if isinstance(batch, (list, tuple)) and len(batch) > 1 else torch.zeros(inputs.shape[0])
-                model(inputs)
-                if hook_output:
-                    feat = hook_output[0]
-                    if feat.dim() > 2:
-                        feat = feat.mean(dim=list(range(2, feat.dim())))
-                    features_list.append(feat.cpu())
-                    labels_list.append(labels)
-                    collected += feat.shape[0]
-    finally:
-        handle.remove()
-
-    return (
-        torch.cat(features_list)[:max_samples].numpy(),
-        torch.cat(labels_list)[:max_samples].numpy(),
-    )
 
 
 def growt_quantize(
@@ -108,14 +60,14 @@ def growt_quantize(
     logger.info("[Growt] Extracting original model features...")
     device = next(quantized_model.parameters()).device
     original_model = original_model.to(device)
-    features_original, extracted_labels = _extract_features(original_model, calibration_data, max_samples=max_samples)
+    features_original, extracted_labels = extract_features(original_model, calibration_data, max_samples=max_samples)
     del original_model
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
     # 4. Extract features from QUANTIZED on SAME data
     logger.info("[Growt] Extracting quantized model features...")
-    features_quantized, _ = _extract_features(quantized_model, calibration_data, max_samples=max_samples)
+    features_quantized, _ = extract_features(quantized_model, calibration_data, max_samples=max_samples)
 
     final_labels = labels if labels is not None else extracted_labels.tolist()
 
@@ -158,7 +110,7 @@ def growt_quantize_compare(
 
     client = GrowtClient(api_url=api_url, api_key=api_key)
 
-    features_ref, extracted_labels = _extract_features(model, calibration_data, max_samples=max_samples)
+    features_ref, extracted_labels = extract_features(model, calibration_data, max_samples=max_samples)
     final_labels = labels if labels is not None else extracted_labels.tolist()
 
     variant_features: dict[str, list[list[float]]] = {}
@@ -170,7 +122,7 @@ def growt_quantize_compare(
         quantizer = ModelQuantizer(config)
         quantizer.quantize_model(variant_model, calibration_data)
 
-        feats, _ = _extract_features(variant_model, calibration_data, max_samples=max_samples)
+        feats, _ = extract_features(variant_model, calibration_data, max_samples=max_samples)
         variant_features[name] = feats.tolist()
         metrics_per[name] = client.metrics_compare(features_ref.tolist(), variant_features[name], final_labels)
 
